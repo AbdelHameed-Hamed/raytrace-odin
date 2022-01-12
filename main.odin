@@ -14,7 +14,7 @@ bitmap_info: win32.Bitmap_Info = {}
 bitmap_mem: rawptr = nil
 
 main :: proc() {
-	cg := compute_group_new(9)
+	cg := compute_group_new()
 	defer compute_group_free(&cg)
 
 	using win32
@@ -121,7 +121,15 @@ main :: proc() {
 		vertical := Vec3{ 0, viewport_height, 0 }
 		lower_left_corner := origin - horizental / 2 - vertical / 2 - Vec3{ 0, 0, focal_length }
 
-		render_gradient(cast(int)width, cast(int)height, origin, lower_left_corner, horizental, vertical)
+		render_gradient_multithreaded(
+			u64(width),
+			u64(height),
+			origin,
+			lower_left_corner,
+			horizental,
+			vertical,
+			&cg,
+		)
 		stretch_dibits(
 			device_ctx,
 			0, 0, width, height,
@@ -170,6 +178,47 @@ render_gradient :: proc(
 			pixels[idx].bgr = { cast(u8)(color.r * 255), cast(u8)(color.g * 255), cast(u8)(color.b * 255) }
 		}
 	}
+}
+
+render_gradient_multithreaded :: proc(
+	width, height: u64,
+	origin, lower_left_corner, horizental, vertical: Vec3,
+	cg: ^Compute_Group)
+{
+	image_byte_slice := mem.byte_slice(bitmap_mem, int(width * height * 4))
+	pixels := mem.slice_data_cast([]Pixel, image_byte_slice)
+
+	Data :: struct {
+		pixels: []Pixel,
+		width, height: u64,
+		origin, lower_left_corner, horizental, vertical: Vec3,
+	}
+
+	data := Data{ pixels, width, height, origin, lower_left_corner, horizental, vertical }
+
+	compute(
+		cg,
+		{ width, height, 1 },
+		{ 64, 64, 1 },
+		proc(args: Workgroup_Args, data: rawptr) {
+			data := (^Data)(data)^
+			using data
+
+			for i in args.global_id.y..<(args.global_id.y + args.tile_size.y) {
+				for j in args.global_id.x..<(args.global_id.x + args.tile_size.x) {
+					u, v := cast(f32)(j) / cast(f32)(width - 1), cast(f32)i / cast(f32)(height - 1)
+					r := Ray{ origin, lower_left_corner + u * horizental + v * vertical - origin }
+					color := ray_color(r)
+
+					idx := (height - i - 1) * width + j
+					pixels[idx].b = cast(u8)(color.r * 255)
+					pixels[idx].g = cast(u8)(color.g * 255)
+					pixels[idx].r = cast(u8)(color.b * 255)
+				}
+			}
+		},
+		&data,
+	)
 }
 
 ray_color :: proc(r: Ray) -> Vec3 {

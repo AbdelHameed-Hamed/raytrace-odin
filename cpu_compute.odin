@@ -102,6 +102,8 @@ compute :: proc(
 	sync.wait_group_init(&wg)
 	defer sync.wait_group_destroy(&wg)
 
+	group.jobs = make([dynamic]Job)
+
 	dispatches := 1 + ((total_size - 1) / workgroup_size)
 	for k in 0..<dispatches[2] {
 		for j in 0..<dispatches[1] {
@@ -127,7 +129,7 @@ compute :: proc(
 	remainder_jobs := len(group.jobs) % len(group.workers)
 	for worker, i in group.workers {
 		begin_offset := remainder_jobs
-		end_offset := 0
+		end_offset := begin_offset
 		if i < remainder_jobs {
 			begin_offset = i
 			end_offset = begin_offset + 1
@@ -135,10 +137,12 @@ compute :: proc(
 
 		begin := i * jobs_per_worker + begin_offset
 		end := (i + 1) * jobs_per_worker + end_offset
+		assert(begin < end)
 		if begin < len(group.jobs) {
 			sync.channel_send(worker.channel, group.jobs[begin:end])
 		}
 	}
 
 	sync.wait_group_wait(&wg)
+	delete(group.jobs)
 }
