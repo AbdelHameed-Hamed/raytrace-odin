@@ -6,76 +6,17 @@ import "core:time"
 import "core:mem"
 import "core:math"
 import "core:math/linalg"
+import "core:thread"
 
 running := true
 
 bitmap_info: win32.Bitmap_Info = {}
 bitmap_mem: rawptr = nil
 
-Pixel :: distinct [4]u8
-
-render_weird_gradient :: proc(time_s: f32, width, height: int) {
-	image_byte_slice := mem.byte_slice(bitmap_mem, width * height * 4)
-	pixels := mem.slice_data_cast([]Pixel, image_byte_slice)
-
-	Vec2 :: distinct [2]f32
-
-	for row in 0..<height {
-		for col in 0..<width {
-			uv := Vec2 { cast(f32)row / cast(f32)width, cast(f32)col / cast(f32)height }
-			idx := cast(u32)(row * width + col);
-
-			pixels[idx].b = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.x + 4)) * 255)
-			pixels[idx].g = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.y + 2)) * 255)
-			pixels[idx].r = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.x + 0)) * 255)
-		}
-	}
-}
-
-hit_sphere :: proc(r: Ray, center: Vec3, radius: f32) -> f32 {
-	oc := r.org - center
-	a := linalg.length2(r.dir)
-	half_b := linalg.dot(oc, r.dir)
-	c := linalg.dot(oc, oc) - radius * radius
-	discriminant := half_b * half_b - a * c
-	if discriminant < 0 {
-		return -1.0
-	} else {
-		return (-half_b - math.sqrt(discriminant)) / a
-	}
-}
-
-ray_color :: proc(r: Ray) -> Vec3 {
-	t := hit_sphere(r, Vec3{ 0, 0, -1 }, 0.5)
-	if t > 0.0 {
-		n := linalg.normalize(at(r, t) - Vec3 { 0, 0, -1 })
-		return 0.5 * (n + 1)
-	}
-	unit_dir := linalg.normalize(r.dir)
-	t = 0.5 * (unit_dir.y + 1.0)
-	return (1.0 - t) * Vec3{ 1.0, 1.0, 1.0 } + t * Vec3{ 0.5, 0.7, 1.0 }
-}
-
-render_gradient :: proc(
-	width, height: int,
-	origin, lower_left_corner, horizental, vertical: Vec3)
-{
-	image_byte_slice := mem.byte_slice(bitmap_mem, width * height * 4)
-	pixels := mem.slice_data_cast([]Pixel, image_byte_slice)
-
-	for i in 0..<height {
-		for j in 0..<width {
-			u, v := cast(f32)(j) / cast(f32)(width - 1), cast(f32)i / cast(f32)(height - 1)
-			r := Ray{ origin, lower_left_corner + u * horizental + v * vertical - origin }
-			color := ray_color(r)
-
-			idx := (height - i - 1) * width + j
-			pixels[idx].bgr = { cast(u8)(color.r * 255), cast(u8)(color.g * 255), cast(u8)(color.b * 255) }
-		}
-	}
-}
-
 main :: proc() {
+	cg := compute_group_new(9)
+	defer compute_group_free(&cg)
+
 	using win32
 
 	h_instance := cast(Hinstance)get_module_handle_a(nil)
@@ -189,5 +130,68 @@ main :: proc() {
 			&bitmap_info,
 			DIB_RGB_COLORS, SRCCOPY,
 		)
+	}
+}
+
+Pixel :: distinct [4]u8
+
+render_weird_gradient :: proc(time_s: f32, width, height: int) {
+	image_byte_slice := mem.byte_slice(bitmap_mem, width * height * 4)
+	pixels := mem.slice_data_cast([]Pixel, image_byte_slice)
+
+	Vec2 :: distinct [2]f32
+
+	for row in 0..<height {
+		for col in 0..<width {
+			uv := Vec2 { cast(f32)row / cast(f32)width, cast(f32)col / cast(f32)height }
+			idx := cast(u32)(row * width + col)
+
+			pixels[idx].b = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.x + 4)) * 255)
+			pixels[idx].g = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.y + 2)) * 255)
+			pixels[idx].r = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.x + 0)) * 255)
+		}
+	}
+}
+
+render_gradient :: proc(
+	width, height: int,
+	origin, lower_left_corner, horizental, vertical: Vec3)
+{
+	image_byte_slice := mem.byte_slice(bitmap_mem, width * height * 4)
+	pixels := mem.slice_data_cast([]Pixel, image_byte_slice)
+
+	for i in 0..<height {
+		for j in 0..<width {
+			u, v := cast(f32)(j) / cast(f32)(width - 1), cast(f32)i / cast(f32)(height - 1)
+			r := Ray{ origin, lower_left_corner + u * horizental + v * vertical - origin }
+			color := ray_color(r)
+
+			idx := (height - i - 1) * width + j
+			pixels[idx].bgr = { cast(u8)(color.r * 255), cast(u8)(color.g * 255), cast(u8)(color.b * 255) }
+		}
+	}
+}
+
+ray_color :: proc(r: Ray) -> Vec3 {
+	t := hit_sphere(r, Vec3{ 0, 0, -1 }, 0.5)
+	if t > 0.0 {
+		n := linalg.normalize(at(r, t) - Vec3 { 0, 0, -1 })
+		return 0.5 * (n + 1)
+	}
+	unit_dir := linalg.normalize(r.dir)
+	t = 0.5 * (unit_dir.y + 1.0)
+	return (1.0 - t) * Vec3{ 1.0, 1.0, 1.0 } + t * Vec3{ 0.5, 0.7, 1.0 }
+}
+
+hit_sphere :: proc(r: Ray, center: Vec3, radius: f32) -> f32 {
+	oc := r.org - center
+	a := linalg.length2(r.dir)
+	half_b := linalg.dot(oc, r.dir)
+	c := linalg.dot(oc, oc) - radius * radius
+	discriminant := half_b * half_b - a * c
+	if discriminant < 0 {
+		return -1.0
+	} else {
+		return (-half_b - math.sqrt(discriminant)) / a
 	}
 }

@@ -1,7 +1,5 @@
 package main
 
-import "core:container"
-import "core:fmt"
 import "core:sync"
 import "core:thread"
 
