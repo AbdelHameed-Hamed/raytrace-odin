@@ -204,18 +204,27 @@ render_gradient_multithreaded :: proc(
 			data := (^Data)(data)^
 			using data
 
-			for i in args.global_id.y..<(args.global_id.y + args.tile_size.y) {
-				for j in args.global_id.x..<(args.global_id.x + args.tile_size.x) {
-					u, v := cast(f32)(j) / cast(f32)(width - 1), cast(f32)i / cast(f32)(height - 1)
-					r := Ray{ origin, lower_left_corner + u * horizental + v * vertical - origin }
-					color := ray_color(r)
+			render_tile(
+				width, height,
+				args.global_id.x, args.global_id.x + args.tile_size.x,
+				args.global_id.y, args.global_id.y + args.tile_size.y,
+				transmute(^f32)&origin, transmute(^f32)&lower_left_corner,
+				transmute(^f32)&horizental, transmute(^f32)&vertical,
+				transmute(^[4]u8)&pixels[0],
+			)
 
-					idx := (height - i - 1) * width + j
-					pixels[idx].b = cast(u8)(color.r * 255)
-					pixels[idx].g = cast(u8)(color.g * 255)
-					pixels[idx].r = cast(u8)(color.b * 255)
-				}
-			}
+			// for i in args.global_id.y..<(args.global_id.y + args.tile_size.y) {
+			// 	for j in args.global_id.x..<(args.global_id.x + args.tile_size.x) {
+			// 		u, v := cast(f32)(j) / cast(f32)(width - 1), cast(f32)i / cast(f32)(height - 1)
+			// 		r := Ray{ origin, lower_left_corner + u * horizental + v * vertical - origin }
+			// 		color := ray_color(r)
+
+			// 		idx := (height - i - 1) * width + j
+			// 		pixels[idx].b = cast(u8)(color.r * 255)
+			// 		pixels[idx].g = cast(u8)(color.g * 255)
+			// 		pixels[idx].r = cast(u8)(color.b * 255)
+			// 	}
+			// }
 		},
 		&data,
 	)
@@ -224,7 +233,7 @@ render_gradient_multithreaded :: proc(
 ray_color :: proc(r: Ray) -> Vec3 {
 	t := hit_sphere(r, Vec3{ 0, 0, -1 }, 0.5)
 	if t > 0.0 {
-		n := linalg.normalize(at(r, t) - Vec3 { 0, 0, -1 })
+		n := linalg.normalize(at(r, t) - Vec3{ 0, 0, -1 })
 		return 0.5 * (n + 1)
 	}
 	unit_dir := linalg.normalize(r.dir)

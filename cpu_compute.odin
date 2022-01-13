@@ -103,6 +103,7 @@ compute :: proc(
 	defer sync.wait_group_destroy(&wg)
 
 	group.jobs = make([dynamic]Job)
+	defer delete(group.jobs)
 
 	dispatches := 1 + ((total_size - 1) / workgroup_size)
 	for k in 0..<dispatches[2] {
@@ -144,5 +145,4 @@ compute :: proc(
 	}
 
 	sync.wait_group_wait(&wg)
-	delete(group.jobs)
 }
