@@ -46,8 +46,8 @@ worker_new :: proc() -> (worker: Worker) {
 				case []Job:
 					for job in m {
 						job.fn(job.args, job.data)
-						sync.wait_group_done(job.wg)
 					}
+					sync.wait_group_add(m[0].wg, -len(m))
 				case State:
 					if m == .Terminate {
 						break loop
