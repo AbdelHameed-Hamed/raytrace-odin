@@ -3,3 +3,5 @@
 *.pdb
 *.json
 *.sln
+*.rdbg
+*.o
