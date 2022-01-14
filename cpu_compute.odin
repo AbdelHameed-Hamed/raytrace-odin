@@ -67,7 +67,6 @@ worker_free :: proc(worker: ^Worker) {
 
 Compute_Group :: struct {
 	workers: [dynamic]Worker,
-	jobs: [dynamic]Job,
 }
 
 compute_group_new :: proc(worker_count := 16) -> (group: Compute_Group) {
@@ -85,7 +84,6 @@ compute_group_free :: proc(group: ^Compute_Group) {
 	}
 
 	delete(group.workers)
-	delete(group.jobs)
 }
 
 compute :: proc(
@@ -102,8 +100,8 @@ compute :: proc(
 	sync.wait_group_init(&wg)
 	defer sync.wait_group_destroy(&wg)
 
-	group.jobs = make([dynamic]Job)
-	defer delete(group.jobs)
+	jobs := make([dynamic]Job)
+	defer delete(jobs)
 
 	dispatches := 1 + ((total_size - 1) / workgroup_size)
 	for k in 0..<dispatches[2] {
@@ -119,15 +117,15 @@ compute :: proc(
 					workgroup_size - (temp / total_size) * (temp % total_size),
 				}
 
-				append(&group.jobs, Job{ fn, args, &wg, data })
+				append(&jobs, Job{ fn, args, &wg, data })
 			}
 		}
 	}
 
 	sync.wait_group_add(&wg, int(dispatches.x * dispatches.y * dispatches.z))
 
-	jobs_per_worker := len(group.jobs) / len(group.workers)
-	remainder_jobs := len(group.jobs) % len(group.workers)
+	jobs_per_worker := len(jobs) / len(group.workers)
+	remainder_jobs := len(jobs) % len(group.workers)
 	for worker, i in group.workers {
 		begin_offset := remainder_jobs
 		end_offset := begin_offset
@@ -139,8 +137,8 @@ compute :: proc(
 		begin := i * jobs_per_worker + begin_offset
 		end := (i + 1) * jobs_per_worker + end_offset
 		assert(begin < end)
-		if begin < len(group.jobs) {
-			sync.channel_send(worker.channel, group.jobs[begin:end])
+		if begin < len(jobs) {
+			sync.channel_send(worker.channel, jobs[begin:end])
 		}
 	}
 
