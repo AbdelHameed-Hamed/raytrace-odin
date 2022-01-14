@@ -276,6 +276,7 @@ ray_color :: proc(r: Ray) -> Vec3 {
 		n := linalg.normalize(at(r, t) - Vec3{ 0, 0, -1 })
 		return 0.5 * (n + 1)
 	}
+
 	unit_dir := linalg.normalize(r.dir)
 	t = 0.5 * (unit_dir.y + 1.0)
 	return (1.0 - t) * Vec3{ 1.0, 1.0, 1.0 } + t * Vec3{ 0.5, 0.7, 1.0 }

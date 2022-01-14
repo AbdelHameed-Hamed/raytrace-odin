@@ -1,14 +1,11 @@
 typedef uint8<4> Pixel;
 typedef float<3> Vec3;
 
-inline float dot(Vec3 lhs, Vec3 rhs) {
-	return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
-}
+inline float dot(Vec3 lhs, Vec3 rhs) { return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z; }
 
 inline static Vec3 normalize(Vec3 v) { return v / sqrt(dot(v, v)); }
 
-struct Ray
-{
+struct Ray {
 	Vec3 org, dir;
 };
 
@@ -23,7 +20,7 @@ inline float hit_sphere(Ray r, Vec3 center, float radius) {
 	if (discriminant < 0) {
 		return -1.0;
 	} else {
-		return -(half_b - sqrt(discriminant)) / a;
+		return (-half_b - sqrt(discriminant)) / a;
 	}
 }
 
