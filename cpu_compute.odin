@@ -1,6 +1,5 @@
 package main
 
-import "core:container"
 import "core:sync"
 import "core:thread"
 
@@ -68,14 +67,14 @@ worker_free :: proc(worker: ^Worker) {
 
 Compute_Group :: struct {
 	workers: [dynamic]Worker,
-	jobs: container.Array(Job),
+	jobs: [dynamic]Job,
 }
 
 compute_group_new :: proc(worker_count := 16) -> (group: Compute_Group) {
 	for i in 0..<worker_count {
 		append(&group.workers, worker_new())
 	}
-	container.array_init(&group.jobs)
+	group.jobs = make([dynamic]Job)
 
 	return group
 }
@@ -86,7 +85,7 @@ compute_group_free :: proc(group: ^Compute_Group) {
 		worker_free(&group.workers[i])
 	}
 
-	container.array_delete(group.jobs)
+	delete(group.jobs)
 	delete(group.workers)
 }
 
@@ -104,12 +103,10 @@ compute :: proc(
 	sync.wait_group_init(&wg)
 	defer sync.wait_group_destroy(&wg)
 
-	using container
-
 	dispatches := 1 + ((total_size - 1) / workgroup_size)
 	dispatches_count := dispatches.x * dispatches.y * dispatches.z
-	array_reserve(&group.jobs, int(dispatches_count))
-	defer array_clear(&group.jobs)
+	reserve(&group.jobs, int(dispatches_count))
+	defer clear(&group.jobs)
 	for k in 0..<dispatches[2] {
 		for j in 0..<dispatches[1] {
 			for i in 0..<dispatches[0] {
@@ -123,15 +120,15 @@ compute :: proc(
 					workgroup_size - (temp / total_size) * (temp % total_size),
 				}
 
-				array_append(&group.jobs, Job{ fn, args, &wg, data })
+				append(&group.jobs, Job{ fn, args, &wg, data })
 			}
 		}
 	}
 
 	sync.wait_group_add(&wg, int(dispatches.x * dispatches.y * dispatches.z))
 
-	jobs_per_worker := array_len(group.jobs) / len(group.workers)
-	remainder_jobs := array_len(group.jobs) % len(group.workers)
+	jobs_per_worker := len(group.jobs) / len(group.workers)
+	remainder_jobs := len(group.jobs) % len(group.workers)
 	for worker, i in group.workers {
 		begin_offset := remainder_jobs
 		end_offset := begin_offset
@@ -143,8 +140,8 @@ compute :: proc(
 		begin := i * jobs_per_worker + begin_offset
 		end := (i + 1) * jobs_per_worker + end_offset
 		assert(begin < end)
-		if begin < array_len(group.jobs) {
-			sync.channel_send(worker.channel, array_slice(group.jobs)[begin:end])
+		if begin < len(group.jobs) {
+			sync.channel_send(worker.channel, group.jobs[begin:end])
 		}
 	}
 
