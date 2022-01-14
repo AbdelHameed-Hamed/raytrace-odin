@@ -6,7 +6,6 @@ import "core:time"
 import "core:mem"
 import "core:math"
 import "core:math/linalg"
-import "core:thread"
 
 running := true
 
@@ -14,10 +13,12 @@ bitmap_info: win32.Bitmap_Info = {}
 bitmap_mem: rawptr = nil
 
 Mode :: enum u8 {
-	Normal = 0,
+	Single = 0,
 	Multithreaded = 1 << 0,
 	SIMD = 1 << 1,
 }
+
+mode := Mode.Single
 
 main :: proc() {
 	cg := compute_group_new()
@@ -37,7 +38,14 @@ main :: proc() {
 
 			switch msg {
 			case WM_KEYDOWN:
-				if w_param == VK_ESCAPE { running = false }
+				switch w_param {
+				case VK_ESCAPE:
+					running = false
+				case VK_NUMPAD1:
+					mode ~= Mode.Multithreaded
+				case VK_NUMPAD2:
+					mode ~= Mode.SIMD
+				}
 			case WM_QUIT, WM_CLOSE, WM_DESTROY:
 				running = false
 			case WM_SIZE:
@@ -135,7 +143,7 @@ main :: proc() {
 			origin, lower_left_corner, horizental, vertical,
 			image,
 			&cg,
-			.Multithreaded | .SIMD,
+			mode,
 		)
 		stretch_dibits(
 			device_ctx,
@@ -175,7 +183,7 @@ render_image :: proc(
 	cg: ^Compute_Group,
 	mode: Mode)
 {
-	if mode & .Multithreaded != .Normal {
+	if mode & .Multithreaded != .Single {
 		Data :: struct {
 			width, height: u64,
 			origin, lower_left_corner, horizental, vertical: Vec3,
@@ -220,7 +228,7 @@ render_tile :: proc(
 	image: []Pixel,
 	mode: Mode)
 {
-	if mode & .SIMD != .Normal {
+	if mode & .SIMD != .Single {
 		origin, lower_left_corner, horizental, vertical := origin, lower_left_corner, horizental, vertical
 		render_tile_simd(
 			width, height, begin_x, end_x, begin_y, end_y,
