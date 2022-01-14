@@ -16,6 +16,7 @@ Mode :: enum u8 {
 	Single = 0,
 	Multithreaded = 1 << 0,
 	SIMD = 1 << 1,
+	Both = Multithreaded | SIMD,
 }
 
 mode := Mode.Single
@@ -109,7 +110,12 @@ main :: proc() {
 		time.stopwatch_start(&stopwatch)
 		defer {
 			frame_time := time.duration_milliseconds(time.stopwatch_duration(stopwatch))
-			fmt.bprintf(title_buffer[:], "Frame time: {}, FPS: {}\x00", frame_time, 1000 / frame_time)
+			fmt.bprintf(
+				title_buffer[:],
+				"Frame time: {}, FPS: {}, mode: {}\x00",
+				frame_time, 1000 / frame_time,
+				mode,
+			)
 			win32.set_window_text_a(hwnd, cstring(&title_buffer[0]))
 			time.stopwatch_reset(&stopwatch)
 		}
