@@ -13,6 +13,12 @@ running := true
 bitmap_info: win32.Bitmap_Info = {}
 bitmap_mem: rawptr = nil
 
+Mode :: enum u8 {
+	Normal = 0,
+	Multithreaded = 1 << 0,
+	SIMD = 1 << 1,
+}
+
 main :: proc() {
 	cg := compute_group_new()
 	defer compute_group_free(&cg)
@@ -121,14 +127,15 @@ main :: proc() {
 		vertical := Vec3{ 0, viewport_height, 0 }
 		lower_left_corner := origin - horizental / 2 - vertical / 2 - Vec3{ 0, 0, focal_length }
 
-		render_gradient_multithreaded(
-			u64(width),
-			u64(height),
-			origin,
-			lower_left_corner,
-			horizental,
-			vertical,
+		image_byte_slice := mem.byte_slice(bitmap_mem, int(width * height * 4))
+		image := mem.slice_data_cast([]Pixel, image_byte_slice)
+
+		render_image(
+			u64(width), u64(height),
+			origin, lower_left_corner, horizental, vertical,
+			image,
 			&cg,
+			.Multithreaded | .SIMD,
 		)
 		stretch_dibits(
 			device_ctx,
@@ -145,7 +152,7 @@ Pixel :: distinct [4]u8
 
 render_weird_gradient :: proc(time_s: f32, width, height: int) {
 	image_byte_slice := mem.byte_slice(bitmap_mem, width * height * 4)
-	pixels := mem.slice_data_cast([]Pixel, image_byte_slice)
+	image := mem.slice_data_cast([]Pixel, image_byte_slice)
 
 	Vec2 :: distinct [2]f32
 
@@ -154,80 +161,99 @@ render_weird_gradient :: proc(time_s: f32, width, height: int) {
 			uv := Vec2 { cast(f32)row / cast(f32)width, cast(f32)col / cast(f32)height }
 			idx := cast(u32)(row * width + col)
 
-			pixels[idx].b = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.x + 4)) * 255)
-			pixels[idx].g = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.y + 2)) * 255)
-			pixels[idx].r = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.x + 0)) * 255)
+			image[idx].b = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.x + 4)) * 255)
+			image[idx].g = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.y + 2)) * 255)
+			image[idx].r = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.x + 0)) * 255)
 		}
 	}
 }
 
-render_gradient :: proc(
-	width, height: int,
-	origin, lower_left_corner, horizental, vertical: Vec3)
+render_image :: proc(
+	width, height: u64,
+	origin, lower_left_corner, horizental, vertical: Vec3,
+	image: []Pixel,
+	cg: ^Compute_Group,
+	mode: Mode)
 {
-	image_byte_slice := mem.byte_slice(bitmap_mem, width * height * 4)
-	pixels := mem.slice_data_cast([]Pixel, image_byte_slice)
+	if mode & .Multithreaded != .Normal {
+		Data :: struct {
+			width, height: u64,
+			origin, lower_left_corner, horizental, vertical: Vec3,
+			image: []Pixel,
+			mode: Mode,
+		}
 
-	for i in 0..<height {
-		for j in 0..<width {
-			u, v := cast(f32)(j) / cast(f32)(width - 1), cast(f32)i / cast(f32)(height - 1)
+		data := Data{ width, height, origin, lower_left_corner, horizental, vertical, image, mode }
+
+		compute(
+			cg,
+			{ width, height, 1 },
+			{ 64, 64, 1 },
+			proc(args: Workgroup_Args, data: rawptr) {
+				data := (^Data)(data)^
+				using data
+
+				render_tile(
+					width, height,
+					args.global_id.x, args.global_id.x + args.tile_size.x,
+					args.global_id.y, args.global_id.y + args.tile_size.y,
+					origin, lower_left_corner, horizental, vertical,
+					image,
+					mode,
+				)
+			},
+			&data,
+		)
+	} else {
+		render_tile(
+			width, height, 0, width, 0, height,
+			origin, lower_left_corner, horizental, vertical,
+			image,
+			mode,
+		)
+	}
+}
+
+render_tile :: proc(
+	width, height, begin_x, end_x, begin_y, end_y: u64,
+	origin, lower_left_corner, horizental, vertical: Vec3,
+	image: []Pixel,
+	mode: Mode)
+{
+	if mode & .SIMD != .Normal {
+		origin, lower_left_corner, horizental, vertical := origin, lower_left_corner, horizental, vertical
+		render_tile_simd(
+			width, height, begin_x, end_x, begin_y, end_y,
+			transmute(^f32)&origin, transmute(^f32)&lower_left_corner,
+			transmute(^f32)&horizental, transmute(^f32)&vertical,
+			transmute(^[4]u8)&image[0],
+		)
+	} else {
+		render_tile_single(
+			width, height, begin_x, end_x, begin_y, end_y,
+			origin, lower_left_corner, horizental, vertical,
+			image,
+		)
+	}
+}
+
+render_tile_single :: proc(
+	width, height, begin_x, end_x, begin_y, end_y: u64,
+	origin, lower_left_corner, horizental, vertical: Vec3,
+	image: []Pixel)
+{
+	for j in begin_y..<end_y {
+		for i in begin_x..<end_x {
+			u, v := cast(f32)(i) / cast(f32)(width - 1), cast(f32)j / cast(f32)(height - 1)
 			r := Ray{ origin, lower_left_corner + u * horizental + v * vertical - origin }
 			color := ray_color(r)
 
-			idx := (height - i - 1) * width + j
-			pixels[idx].bgr = { cast(u8)(color.r * 255), cast(u8)(color.g * 255), cast(u8)(color.b * 255) }
+			idx := (height - j - 1) * width + i
+			image[idx].b = cast(u8)(color.r * 255)
+			image[idx].g = cast(u8)(color.g * 255)
+			image[idx].r = cast(u8)(color.b * 255)
 		}
 	}
-}
-
-render_gradient_multithreaded :: proc(
-	width, height: u64,
-	origin, lower_left_corner, horizental, vertical: Vec3,
-	cg: ^Compute_Group)
-{
-	image_byte_slice := mem.byte_slice(bitmap_mem, int(width * height * 4))
-	pixels := mem.slice_data_cast([]Pixel, image_byte_slice)
-
-	Data :: struct {
-		pixels: []Pixel,
-		width, height: u64,
-		origin, lower_left_corner, horizental, vertical: Vec3,
-	}
-
-	data := Data{ pixels, width, height, origin, lower_left_corner, horizental, vertical }
-
-	compute(
-		cg,
-		{ width, height, 1 },
-		{ 64, 64, 1 },
-		proc(args: Workgroup_Args, data: rawptr) {
-			data := (^Data)(data)^
-			using data
-
-			render_tile(
-				width, height,
-				args.global_id.x, args.global_id.x + args.tile_size.x,
-				args.global_id.y, args.global_id.y + args.tile_size.y,
-				transmute(^f32)&origin, transmute(^f32)&lower_left_corner,
-				transmute(^f32)&horizental, transmute(^f32)&vertical,
-				transmute(^[4]u8)&pixels[0],
-			)
-
-			// for i in args.global_id.y..<(args.global_id.y + args.tile_size.y) {
-			// 	for j in args.global_id.x..<(args.global_id.x + args.tile_size.x) {
-			// 		u, v := cast(f32)(j) / cast(f32)(width - 1), cast(f32)i / cast(f32)(height - 1)
-			// 		r := Ray{ origin, lower_left_corner + u * horizental + v * vertical - origin }
-			// 		color := ray_color(r)
-
-			// 		idx := (height - i - 1) * width + j
-			// 		pixels[idx].b = cast(u8)(color.r * 255)
-			// 		pixels[idx].g = cast(u8)(color.g * 255)
-			// 		pixels[idx].r = cast(u8)(color.b * 255)
-			// 	}
-			// }
-		},
-		&data,
-	)
 }
 
 ray_color :: proc(r: Ray) -> Vec3 {

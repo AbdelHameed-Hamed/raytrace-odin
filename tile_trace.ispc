@@ -41,7 +41,7 @@ inline Vec3 ray_color(Ray r) {
 	return (1.0 - t) * white + t * blueish;
 }
 
-export void render_tile(
+export void render_tile_simd(
 	uniform const uint64 width,
 	uniform const uint64 height,
 	uniform const uint64 begin_x,
@@ -52,7 +52,7 @@ export void render_tile(
 	uniform const float lower_left_corner[3],
 	uniform const float horizental[3],
 	uniform const float vertical[3],
-	uniform Pixel pixels[])
+	uniform Pixel image[])
 {
 	const uniform Vec3 origin = { origin[0], origin[1], origin[2] };
 	const uniform Vec3 lower_left_corner = {
@@ -68,9 +68,9 @@ export void render_tile(
 		Ray r = { origin, lower_left_corner + u * horizental + v * vertical - origin };
 		Vec3 color = ray_color(r);
 
-		pixels[(height - j - 1) * width + i].b = (int)(color.r * 255);
-		pixels[(height - j - 1) * width + i].g = (int)(color.g * 255);
-		pixels[(height - j - 1) * width + i].r = (int)(color.b * 255);
+		image[(height - j - 1) * width + i].b = (int)(color.r * 255);
+		image[(height - j - 1) * width + i].g = (int)(color.g * 255);
+		image[(height - j - 1) * width + i].r = (int)(color.b * 255);
 	}
 }
 
