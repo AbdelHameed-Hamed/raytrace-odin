@@ -7,6 +7,8 @@ import "core:mem"
 import "core:math"
 import "core:math/linalg"
 
+import tracy "odin-tracy"
+
 running := true
 
 bitmap_info: win32.Bitmap_Info = {}
@@ -66,23 +68,6 @@ main :: proc() {
 				bitmap_info.header.compression = BI_RGB
 
 				bitmap_mem = virtual_alloc(nil, cast(uint)(width * height * 4), MEM_COMMIT, PAGE_READWRITE)
-			case WM_PAINT:
-				paint: Paint_Struct
-				device_ctx := begin_paint(hwnd, &paint)
-				defer end_paint(hwnd, &paint)
-
-				x, y := paint.rc_paint.left, paint.rc_paint.top
-				width := paint.rc_paint.right - paint.rc_paint.left
-				height := paint.rc_paint.bottom - paint.rc_paint.top
-
-				stretch_dibits(
-					device_ctx,
-					x, y, width, height,
-					x, y, width, height,
-					bitmap_mem,
-					&bitmap_info,
-					DIB_RGB_COLORS, SRCCOPY,
-				)
 			case:
 				res = def_window_proc_a(hwnd, msg, w_param, l_param)
 			}
@@ -159,6 +144,8 @@ main :: proc() {
 			&bitmap_info,
 			DIB_RGB_COLORS, SRCCOPY,
 		)
+
+		tracy.FrameMark()
 	}
 }
 
