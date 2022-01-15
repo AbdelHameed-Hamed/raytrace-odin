@@ -7,6 +7,7 @@ foreign tile_trace {
 	render_tile_simd :: proc(
 		width, height, begin_x, end_x, begin_y, end_y: u64,
 		origin, lower_left_corner, horizental, vertical: ^f32,
+		spheres: ^[4]f32, sphere_count: u64,
 		image: ^[4]u8,
 	) ---
 }

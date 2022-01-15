@@ -1,5 +1,6 @@
 typedef uint8<4> Pixel;
 typedef float<3> Vec3;
+typedef float<4> Sphere;
 
 inline float dot(Vec3 lhs, Vec3 rhs) { return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z; }
 
@@ -24,11 +25,20 @@ inline float hit_sphere(Ray r, Vec3 center, float radius) {
 	}
 }
 
-inline Vec3 ray_color(Ray r) {
-	Vec3 center = { 0, 0, -1 };
-	float t = hit_sphere(r, center, 0.5);
+inline Vec3 ray_color(Ray r, uniform const Sphere spheres[], uniform uint64 sphere_count) {
+	float t = -1;
+	Sphere sphere;
+
+	for (uint64 i = 0; i < sphere_count; ++i) {
+		float temp = hit_sphere(r, spheres[i].xyz, spheres[i].w);
+		if (temp > 0 && (t == -1 || temp < t)) {
+			t = temp;
+			sphere = spheres[i];
+		}
+	}
+
 	if (t > 0.0) {
-		Vec3 n = normalize(at(r, t) - center);
+		Vec3 n = normalize(at(r, t) - sphere.xyz);
 		return 0.5 * (n + 1);
 	}
 
@@ -49,6 +59,8 @@ export void render_tile_simd(
 	uniform const float lower_left_corner[3],
 	uniform const float horizental[3],
 	uniform const float vertical[3],
+	uniform const Sphere spheres[],
+	uniform const uint64 sphere_count,
 	uniform Pixel image[])
 {
 	const uniform Vec3 origin = { origin[0], origin[1], origin[2] };
@@ -63,7 +75,7 @@ export void render_tile_simd(
 	foreach_tiled (j = begin_y...end_y, i = begin_x...end_x) {
 		float u = i / (float)(width - 1), v = j / (float)(height - 1);
 		Ray r = { origin, lower_left_corner + u * horizental + v * vertical - origin };
-		Vec3 color = ray_color(r);
+		Vec3 color = ray_color(r, spheres, sphere_count);
 
 		image[(height - j - 1) * width + i].b = (int)(color.r * 255);
 		image[(height - j - 1) * width + i].g = (int)(color.g * 255);

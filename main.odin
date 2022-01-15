@@ -23,7 +23,18 @@ Mode :: enum u8 {
 
 mode := Mode.Single
 
+Sphere :: struct {
+	center: Vec3,
+	radius: f32,
+}
+
 main :: proc() {
+	spheres := make([dynamic]Sphere)
+	defer delete(spheres)
+
+	append(&spheres, Sphere{ Vec3{ 0,      0, -1 }, 0.5 })
+	append(&spheres, Sphere{ Vec3{ 0, -100.5, -1 }, 100 })
+
 	cg := compute_group_new()
 	defer compute_group_free(&cg)
 
@@ -117,9 +128,9 @@ main :: proc() {
 		width, height := rect.right - rect.left, rect.bottom - rect.top
 
 		aspect_ratio := cast(f32)width / cast(f32)height
-		viewport_height: f32 = 2.0
+		viewport_height: f32 = 2
 		viewport_width := viewport_height * aspect_ratio
-		focal_length:f32 = 1.0
+		focal_length:f32 = 1
 
 		origin := Vec3{ 0, 0, 0 }
 		horizental := Vec3{ viewport_width, 0, 0 }
@@ -132,6 +143,7 @@ main :: proc() {
 		render_image(
 			u64(width), u64(height),
 			origin, lower_left_corner, horizental, vertical,
+			spheres[:],
 			image,
 			&cg,
 			mode,
@@ -172,6 +184,7 @@ render_weird_gradient :: proc(time_s: f32, width, height: int) {
 render_image :: proc(
 	width, height: u64,
 	origin, lower_left_corner, horizental, vertical: Vec3,
+	spheres: []Sphere,
 	image: []Pixel,
 	cg: ^Compute_Group,
 	mode: Mode)
@@ -180,11 +193,18 @@ render_image :: proc(
 		Data :: struct {
 			width, height: u64,
 			origin, lower_left_corner, horizental, vertical: Vec3,
+			spheres: []Sphere,
 			image: []Pixel,
 			mode: Mode,
 		}
 
-		data := Data{ width, height, origin, lower_left_corner, horizental, vertical, image, mode }
+		data := Data{
+			width, height,
+			origin, lower_left_corner, horizental, vertical,
+			spheres,
+			image,
+			mode,
+		}
 
 		compute(
 			cg,
@@ -199,6 +219,7 @@ render_image :: proc(
 					args.global_id.x, args.global_id.x + args.tile_size.x,
 					args.global_id.y, args.global_id.y + args.tile_size.y,
 					origin, lower_left_corner, horizental, vertical,
+					spheres,
 					image,
 					mode,
 				)
@@ -209,6 +230,7 @@ render_image :: proc(
 		render_tile(
 			width, height, 0, width, 0, height,
 			origin, lower_left_corner, horizental, vertical,
+			spheres,
 			image,
 			mode,
 		)
@@ -218,21 +240,25 @@ render_image :: proc(
 render_tile :: proc(
 	width, height, begin_x, end_x, begin_y, end_y: u64,
 	origin, lower_left_corner, horizental, vertical: Vec3,
+	spheres: []Sphere,
 	image: []Pixel,
 	mode: Mode)
 {
 	if mode & .SIMD != .Single {
 		origin, lower_left_corner, horizental, vertical := origin, lower_left_corner, horizental, vertical
+
 		render_tile_simd(
 			width, height, begin_x, end_x, begin_y, end_y,
 			transmute(^f32)&origin, transmute(^f32)&lower_left_corner,
 			transmute(^f32)&horizental, transmute(^f32)&vertical,
+			transmute(^[4]f32)&spheres[0], u64(len(spheres)),
 			transmute(^[4]u8)&image[0],
 		)
 	} else {
 		render_tile_single(
 			width, height, begin_x, end_x, begin_y, end_y,
 			origin, lower_left_corner, horizental, vertical,
+			spheres,
 			image,
 		)
 	}
@@ -241,13 +267,14 @@ render_tile :: proc(
 render_tile_single :: proc(
 	width, height, begin_x, end_x, begin_y, end_y: u64,
 	origin, lower_left_corner, horizental, vertical: Vec3,
+	spheres: []Sphere,
 	image: []Pixel)
 {
 	for j in begin_y..<end_y {
 		for i in begin_x..<end_x {
 			u, v := cast(f32)(i) / cast(f32)(width - 1), cast(f32)j / cast(f32)(height - 1)
 			r := Ray{ origin, lower_left_corner + u * horizental + v * vertical - origin }
-			color := ray_color(r)
+			color := ray_color(r, spheres)
 
 			idx := (height - j - 1) * width + i
 			image[idx].b = cast(u8)(color.r * 255)
@@ -257,26 +284,37 @@ render_tile_single :: proc(
 	}
 }
 
-ray_color :: proc(r: Ray) -> Vec3 {
-	t := hit_sphere(r, Vec3{ 0, 0, -1 }, 0.5)
-	if t > 0.0 {
-		n := linalg.normalize(at(r, t) - Vec3{ 0, 0, -1 })
+ray_color :: proc(r: Ray, spheres: []Sphere) -> Vec3 {
+	t: f32 = -1
+	sphere: Sphere = ---
+	for s in spheres {
+		temp := hit_sphere(r, s)
+		if temp > 0 && (t == -1 || temp < t) {
+			t = temp
+			sphere = s
+		}
+	}
+
+	if t > 0 {
+		n := linalg.normalize(at(r, t) - sphere.center)
 		return 0.5 * (n + 1)
 	}
 
 	unit_dir := linalg.normalize(r.dir)
-	t = 0.5 * (unit_dir.y + 1.0)
-	return (1.0 - t) * Vec3{ 1.0, 1.0, 1.0 } + t * Vec3{ 0.5, 0.7, 1.0 }
+	t = 0.5 * (unit_dir.y + 1)
+	return (1 - t) * Vec3{ 1, 1, 1 } + t * Vec3{ 0.5, 0.7, 1 }
 }
 
-hit_sphere :: proc(r: Ray, center: Vec3, radius: f32) -> f32 {
+hit_sphere :: proc(r: Ray, s: Sphere) -> f32 {
+	using s
+
 	oc := r.org - center
 	a := linalg.length2(r.dir)
 	half_b := linalg.dot(oc, r.dir)
 	c := linalg.dot(oc, oc) - radius * radius
 	discriminant := half_b * half_b - a * c
 	if discriminant < 0 {
-		return -1.0
+		return -1
 	} else {
 		return (-half_b - math.sqrt(discriminant)) / a
 	}
