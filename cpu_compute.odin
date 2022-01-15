@@ -35,11 +35,17 @@ Worker :: struct {
 	channel: sync.Channel(Message, .Both),
 }
 
-worker_new :: proc() -> (worker: Worker) {
+@(thread_local, private="file") worker_idx: u64
+local_worker_idx :: proc() -> u64 { return worker_idx }
+
+worker_new :: proc(idx: u64) -> (worker: Worker) {
 	worker.channel = sync.channel_make(Message)
-	worker.thread = thread.create_and_start_with_poly_data(
+	worker.thread = thread.create_and_start_with_poly_data2(
 		worker.channel,
-		proc(channel: sync.Channel(Message, .Both)) {
+		idx,
+		proc(channel: sync.Channel(Message, .Both), idx: u64) {
+			worker_idx = idx
+
 			loop: for {
 				message := sync.channel_recv(channel)
 				switch m in message {
@@ -72,7 +78,7 @@ Compute_Group :: struct {
 
 compute_group_new :: proc(worker_count := 16) -> (group: Compute_Group) {
 	for i in 0..<worker_count {
-		append(&group.workers, worker_new())
+		append(&group.workers, worker_new(u64(i)))
 	}
 	group.jobs = make([dynamic]Job)
 

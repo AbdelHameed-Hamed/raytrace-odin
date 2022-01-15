@@ -12,7 +12,7 @@ struct Ray {
 
 inline Vec3 at(Ray r, float t) { return r.org + t * r.dir; }
 
-inline float hit_sphere(Ray r, Vec3 center, float radius) {
+inline float hit_sphere(Ray r, uniform Vec3 center, uniform float radius) {
 	Vec3 oc = r.org - center;
 	float a = dot(r.dir, r.dir);
 	float half_b = dot(oc, r.dir);
@@ -29,7 +29,7 @@ inline Vec3 ray_color(Ray r, uniform const Sphere spheres[], uniform uint64 sphe
 	float t = -1;
 	Sphere sphere;
 
-	for (uint64 i = 0; i < sphere_count; ++i) {
+	for (uniform uint64 i = 0; i < sphere_count; ++i) {
 		float temp = hit_sphere(r, spheres[i].xyz, spheres[i].w);
 		if (temp > 0 && (t == -1 || temp < t)) {
 			t = temp;
