@@ -1,3 +1,6 @@
 [submodule "odin-tracy"]
 	path = odin-tracy
 	url = git@github.com:oskarnp/odin-tracy.git
+[submodule "parallel-compute-odin"]
+	path = parallel-compute-odin
+	url = git@github.com:AbdelHameed-Hamed/parallel-compute-odin.git

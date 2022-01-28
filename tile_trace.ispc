@@ -1,8 +1,19 @@
-typedef uint8<4> Pixel;
-typedef float<3> Vec3;
-typedef float<4> Sphere;
+typedef uint8 u8;
+typedef uint16 u16;
+typedef uint32 u32;
+typedef uint64 u64;
+typedef int8 i8;
+typedef int16 i16;
+typedef int32 i32;
+typedef int64 i64;
+typedef float f32;
+typedef double f64;
 
-inline float dot(Vec3 lhs, Vec3 rhs) { return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z; }
+typedef u8<4> Pixel;
+typedef f32<3> Vec3;
+typedef f32<4> Sphere;
+
+inline f32 dot(Vec3 lhs, Vec3 rhs) { return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z; }
 
 inline static Vec3 normalize(Vec3 v) { return v / sqrt(dot(v, v)); }
 
@@ -10,14 +21,18 @@ struct Ray {
 	Vec3 org, dir;
 };
 
-inline Vec3 at(Ray r, float t) { return r.org + t * r.dir; }
+inline Vec3 at(Ray r, f32 t) { return r.org + t * r.dir; }
 
-inline float hit_sphere(Ray r, uniform Vec3 center, uniform float radius) {
+struct Camera {
+	f32 origin[3], lower_left_corner[3], horizental[3], vertical[3];
+};
+
+inline f32 hit_sphere(Ray r, uniform Vec3 center, uniform f32 radius) {
 	Vec3 oc = r.org - center;
-	float a = dot(r.dir, r.dir);
-	float half_b = dot(oc, r.dir);
-	float c = dot(oc, oc) - radius * radius;
-	float discriminant = half_b * half_b - a * c;
+	f32 a = dot(r.dir, r.dir);
+	f32 half_b = dot(oc, r.dir);
+	f32 c = dot(oc, oc) - radius * radius;
+	f32 discriminant = half_b * half_b - a * c;
 	if (discriminant < 0) {
 		return -1.0;
 	} else {
@@ -25,12 +40,12 @@ inline float hit_sphere(Ray r, uniform Vec3 center, uniform float radius) {
 	}
 }
 
-inline Vec3 ray_color(Ray r, uniform const Sphere spheres[], uniform uint64 sphere_count) {
-	float t = -1;
+inline Vec3 ray_color(Ray r, uniform const Sphere spheres[], uniform u64 sphere_count) {
+	f32 t = -1;
 	Sphere sphere;
 
-	for (uniform uint64 i = 0; i < sphere_count; ++i) {
-		float temp = hit_sphere(r, spheres[i].xyz, spheres[i].w);
+	for (uniform u64 i = 0; i < sphere_count; ++i) {
+		f32 temp = hit_sphere(r, spheres[i].xyz, spheres[i].w);
 		if (temp > 0 && (t == -1 || temp < t)) {
 			t = temp;
 			sphere = spheres[i];
@@ -48,32 +63,50 @@ inline Vec3 ray_color(Ray r, uniform const Sphere spheres[], uniform uint64 sphe
 	return (1.0 - t) * white + t * blueish;
 }
 
+struct Rand {
+	u64 state, inc;
+};
+
+inline u32 rand_u32(Rand& r) {
+	u64 old_state = r.state;
+	r.state = old_state * 6364136223846793005 + (r.inc | 1);
+	u32 xor_shited = u32(((old_state >> 18) ^ old_state) >> 27);
+	u32 rot = u32(old_state >> 59);
+	return (xor_shited >> rot) | (xor_shited << ((-rot) & 31));
+}
+
+inline u64 rand_u64(Rand& r) {
+	u32 a = rand_u32(r);
+	u32 b = rand_u32(r);
+	return (a << 32) | b;
+}
+
+inline i32 rand_i31(Rand& r) { return i32(rand_u32(r) << 1 >> 1); }
+inline i64 rand_i63(Rand& r) { return i64(rand_u64(r) << 1 >> 1); }
+
 export void render_tile_simd(
-	uniform const uint64 width,
-	uniform const uint64 height,
-	uniform const uint64 begin_x,
-	uniform const uint64 end_x,
-	uniform const uint64 begin_y,
-	uniform const uint64 end_y,
-	uniform const float origin[3],
-	uniform const float lower_left_corner[3],
-	uniform const float horizental[3],
-	uniform const float vertical[3],
+	uniform const u64 width,
+	uniform const u64 height,
+	uniform const u64 begin_x,
+	uniform const u64 end_x,
+	uniform const u64 begin_y,
+	uniform const u64 end_y,
+	uniform const Camera camera,
 	uniform const Sphere spheres[],
-	uniform const uint64 sphere_count,
+	uniform const u64 sphere_count,
 	uniform Pixel image[])
 {
-	const uniform Vec3 origin = { origin[0], origin[1], origin[2] };
+	const uniform Vec3 origin = { camera.origin[0], camera.origin[1], camera.origin[2] };
 	const uniform Vec3 lower_left_corner = {
-		lower_left_corner[0],
-		lower_left_corner[1],
-		lower_left_corner[2]
+		camera.lower_left_corner[0],
+		camera.lower_left_corner[1],
+		camera.lower_left_corner[2]
 	};
-	const uniform Vec3 horizental = { horizental[0], horizental[1], horizental[2] };
-	const uniform Vec3 vertical = { vertical[0], vertical[1], vertical[2] };
+	const uniform Vec3 horizental = { camera.horizental[0], camera.horizental[1], camera.horizental[2] };
+	const uniform Vec3 vertical = { camera.vertical[0], camera.vertical[1], camera.vertical[2] };
 
 	foreach_tiled (j = begin_y...end_y, i = begin_x...end_x) {
-		float u = i / (float)(width - 1), v = j / (float)(height - 1);
+		f32 u = i / (f32)(width - 1), v = j / (f32)(height - 1);
 		Ray r = { origin, lower_left_corner + u * horizental + v * vertical - origin };
 		Vec3 color = ray_color(r, spheres, sphere_count);
 

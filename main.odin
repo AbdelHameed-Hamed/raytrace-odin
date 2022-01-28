@@ -4,10 +4,12 @@ import "core:fmt"
 import "core:sys/win32"
 import "core:time"
 import "core:mem"
-import "core:math"
 import "core:math/linalg"
+import "core:math/rand"
 
 import tracy "odin-tracy"
+
+import compute "parallel-compute-odin"
 
 running := true
 
@@ -21,12 +23,9 @@ Mode :: enum u8 {
 	Both = Multithreaded | SIMD,
 }
 
-mode := Mode.Single
+mode := Mode.Multithreaded
 
-Sphere :: struct {
-	center: Vec3,
-	radius: f32,
-}
+SAMPLES_PER_PIXEL :: 8
 
 main :: proc() {
 	spheres := make([dynamic]Sphere)
@@ -35,8 +34,11 @@ main :: proc() {
 	append(&spheres, Sphere{ Vec3{ 0,      0, -1 }, 0.5 })
 	append(&spheres, Sphere{ Vec3{ 0, -100.5, -1 }, 100 })
 
-	cg := compute_group_new()
-	defer compute_group_free(&cg)
+	cg := compute.compute_group_new()
+	defer compute.compute_group_free(&cg)
+
+	thread_prngs := make([]rand.Rand, len(cg.workers))
+	defer delete(thread_prngs)
 
 	using win32
 
@@ -132,18 +134,26 @@ main :: proc() {
 		viewport_width := viewport_height * aspect_ratio
 		focal_length:f32 = 1
 
-		origin := Vec3{ 0, 0, 0 }
-		horizental := Vec3{ viewport_width, 0, 0 }
-		vertical := Vec3{ 0, viewport_height, 0 }
-		lower_left_corner := origin - horizental / 2 - vertical / 2 - Vec3{ 0, 0, focal_length }
+		camera := Camera{
+			origin = Vec3{ 0, 0, 0 },
+			horizontal = Vec3{ viewport_width, 0, 0 },
+			vertical = Vec3{ 0, viewport_height, 0 },
+		}
+		camera.lower_left_corner =
+			camera.origin - camera.horizontal / 2 - camera.vertical / 2 - Vec3{ 0, 0, focal_length }
+
+		for _, i in thread_prngs {
+			thread_prngs[i] = rand.Rand{ 0x853c49e6748fea9b, 0xda3e39cb94b95bdb }
+		}
 
 		image_byte_slice := mem.byte_slice(bitmap_mem, int(width * height * 4))
 		image := mem.slice_data_cast([]Pixel, image_byte_slice)
 
 		render_image(
 			u64(width), u64(height),
-			origin, lower_left_corner, horizental, vertical,
+			camera,
 			spheres[:],
+			thread_prngs,
 			image,
 			&cg,
 			mode,
@@ -163,54 +173,32 @@ main :: proc() {
 
 Pixel :: distinct [4]u8
 
-render_weird_gradient :: proc(time_s: f32, width, height: int) {
-	image_byte_slice := mem.byte_slice(bitmap_mem, width * height * 4)
-	image := mem.slice_data_cast([]Pixel, image_byte_slice)
-
-	Vec2 :: distinct [2]f32
-
-	for row in 0..<height {
-		for col in 0..<width {
-			uv := Vec2 { cast(f32)row / cast(f32)width, cast(f32)col / cast(f32)height }
-			idx := cast(u32)(row * width + col)
-
-			image[idx].b = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.x + 4)) * 255)
-			image[idx].g = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.y + 2)) * 255)
-			image[idx].r = cast(u8)((0.5 + 0.5 * math.cos(time_s + uv.x + 0)) * 255)
-		}
-	}
-}
-
 render_image :: proc(
 	width, height: u64,
-	origin, lower_left_corner, horizental, vertical: Vec3,
+	camera: Camera,
 	spheres: []Sphere,
+	thread_prngs: []rand.Rand,
 	image: []Pixel,
-	cg: ^Compute_Group,
+	cg: ^compute.Compute_Group,
 	mode: Mode)
 {
 	if mode & .Multithreaded != .Single {
 		Data :: struct {
 			width, height: u64,
-			origin, lower_left_corner, horizental, vertical: Vec3,
+			camera: Camera,
 			spheres: []Sphere,
+			thread_prngs: []rand.Rand,
 			image: []Pixel,
 			mode: Mode,
 		}
 
-		data := Data{
-			width, height,
-			origin, lower_left_corner, horizental, vertical,
-			spheres,
-			image,
-			mode,
-		}
+		data := Data{ width, height, camera, spheres, thread_prngs, image, mode }
 
-		compute(
+		compute.compute(
 			cg,
 			{ width, height, 1 },
 			{ 64, 64, 1 },
-			proc(args: Workgroup_Args, data: rawptr) {
+			proc(args: compute.Workgroup_Args, data: rawptr) {
 				data := (^Data)(data)^
 				using data
 
@@ -218,8 +206,9 @@ render_image :: proc(
 					width, height,
 					args.global_id.x, args.global_id.x + args.tile_size.x,
 					args.global_id.y, args.global_id.y + args.tile_size.y,
-					origin, lower_left_corner, horizental, vertical,
+					camera,
 					spheres,
+					&thread_prngs[compute.local_worker_idx()],
 					image,
 					mode,
 				)
@@ -227,59 +216,55 @@ render_image :: proc(
 			&data,
 		)
 	} else {
-		render_tile(
-			width, height, 0, width, 0, height,
-			origin, lower_left_corner, horizental, vertical,
-			spheres,
-			image,
-			mode,
-		)
+		render_tile(width, height, 0, width, 0, height, camera, spheres, &thread_prngs[0], image, mode)
 	}
 }
 
 render_tile :: proc(
 	width, height, begin_x, end_x, begin_y, end_y: u64,
-	origin, lower_left_corner, horizental, vertical: Vec3,
+	camera: Camera,
 	spheres: []Sphere,
+	prng: ^rand.Rand,
 	image: []Pixel,
 	mode: Mode)
 {
 	if mode & .SIMD != .Single {
-		origin, lower_left_corner, horizental, vertical := origin, lower_left_corner, horizental, vertical
+		camera := camera
+		using camera
 
 		render_tile_simd(
 			width, height, begin_x, end_x, begin_y, end_y,
 			transmute(^f32)&origin, transmute(^f32)&lower_left_corner,
-			transmute(^f32)&horizental, transmute(^f32)&vertical,
+			transmute(^f32)&horizontal, transmute(^f32)&vertical,
 			transmute(^[4]f32)&spheres[0], u64(len(spheres)),
 			transmute(^[4]u8)&image[0],
 		)
 	} else {
-		render_tile_single(
-			width, height, begin_x, end_x, begin_y, end_y,
-			origin, lower_left_corner, horizental, vertical,
-			spheres,
-			image,
-		)
+		render_tile_single(width, height, begin_x, end_x, begin_y, end_y, camera, spheres, prng, image)
 	}
 }
 
 render_tile_single :: proc(
 	width, height, begin_x, end_x, begin_y, end_y: u64,
-	origin, lower_left_corner, horizental, vertical: Vec3,
+	camera: Camera,
 	spheres: []Sphere,
+	prng: ^rand.Rand,
 	image: []Pixel)
 {
 	for j in begin_y..<end_y {
 		for i in begin_x..<end_x {
-			u, v := cast(f32)(i) / cast(f32)(width - 1), cast(f32)j / cast(f32)(height - 1)
-			r := Ray{ origin, lower_left_corner + u * horizental + v * vertical - origin }
-			color := ray_color(r, spheres)
+			color := Vec3{}
 
+			for k in 0..<SAMPLES_PER_PIXEL {
+				u := (f32(i) + rand.float32(prng)) / f32(width - 1)
+				v := (f32(j) + rand.float32(prng)) / f32(height - 1)
+				r := get_ray(camera, u, v)
+				color += ray_color(r, spheres)
+			}
+
+			color /= SAMPLES_PER_PIXEL
 			idx := (height - j - 1) * width + i
-			image[idx].b = cast(u8)(color.r * 255)
-			image[idx].g = cast(u8)(color.g * 255)
-			image[idx].r = cast(u8)(color.b * 255)
+			image[idx].bgr = { u8(color.r * 255), u8(color.g * 255), u8(color.b * 255) }
 		}
 	}
 }
@@ -303,19 +288,4 @@ ray_color :: proc(r: Ray, spheres: []Sphere) -> Vec3 {
 	unit_dir := linalg.normalize(r.dir)
 	t = 0.5 * (unit_dir.y + 1)
 	return (1 - t) * Vec3{ 1, 1, 1 } + t * Vec3{ 0.5, 0.7, 1 }
-}
-
-hit_sphere :: proc(r: Ray, s: Sphere) -> f32 {
-	using s
-
-	oc := r.org - center
-	a := linalg.length2(r.dir)
-	half_b := linalg.dot(oc, r.dir)
-	c := linalg.dot(oc, oc) - radius * radius
-	discriminant := half_b * half_b - a * c
-	if discriminant < 0 {
-		return -1
-	} else {
-		return (-half_b - math.sqrt(discriminant)) / a
-	}
 }
