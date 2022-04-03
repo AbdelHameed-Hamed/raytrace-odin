@@ -7,8 +7,6 @@ import "core:mem"
 import "core:math/linalg"
 import "core:math/rand"
 
-import tracy "odin-tracy"
-
 import compute "parallel-compute-odin"
 
 running := true
@@ -166,8 +164,6 @@ main :: proc() {
 			&bitmap_info,
 			DIB_RGB_COLORS, SRCCOPY,
 		)
-
-		tracy.FrameMark()
 	}
 }
 
