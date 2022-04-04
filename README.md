@@ -4,7 +4,7 @@ https://user-images.githubusercontent.com/18620914/161448483-867b09f8-ef6a-43f8-
 
 # Building
 
-First you need to have a few things installed.
+First, you need to have a few things installed.
 
 - [Odin](https://odin-lang.org/)
 - [ISPC](https://ispc.github.io/)
